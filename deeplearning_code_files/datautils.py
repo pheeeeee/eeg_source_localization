@@ -9,9 +9,14 @@ from scipy.fft import fft
 from scipy.signal import welch
 import numpy as np
 import mne
+
 class MyTrainDataset(Dataset):
-    def __init__(self, mri_id:list, 
+    def __init__(self, 
+                 mri_id:list, 
                  outputtype:str, 
+                 mri_dir:str,
+                 eeg_subject_dir:str,
+
                  eegtype='raw', 
                  DTYPE=torch.float32, 
                  mri_n_downsampling:int=0, 
@@ -24,13 +29,16 @@ class MyTrainDataset(Dataset):
         self.eeg_per_mri = eeg_per_mri
         self.size = len(mri_id) * eeg_per_mri
         self.DTYPE = DTYPE
+
+        self.mri_dir = mri_dir,
+        self.eeg_subject_dir = eeg_subject_dir
         
         assert eegtype in ['raw','psd','fourier cos', 'fourier sin', 'fourier concatenate'], "eegtype must be one of 'raw','psd','fourier cos', 'fourier sin'"
         self.eegtype = eegtype
         
         self.ch_names = ch_names
         if ch_names is not None:
-            info = PosixPath("/data/pheeeeee/FINAL_EEG_DATA//sub-01/info.fif")
+            info = os.path.join(eeg_subject_dir, 'sub-01/info.fif') #PosixPath("/data/pheeeeee/FINAL_EEG_DATA//sub-01/info.fif")
             info = mne.io.read_info(info)
             eeg_channel_index =[]
             for ch in ch_names:
@@ -52,7 +60,8 @@ class MyTrainDataset(Dataset):
         eeg_dir = []
         output_dir = []
         for identity in mri_id:
-            mri_data = nib.load(f'/data/pheeeeee/mris/sub-{identity:02d}/sample/mri/T1.mgz') #torch.load(f'/mnt/d/real_dataset/sub-{identity:02d}/mri.pt')
+            mri_path = os.path.join(mri_dir, f'/sub-{identity:02d}/T1.mgz')
+            mri_data = nib.load(mri_path) #torch.load(f'/mnt/d/real_dataset/sub-{identity:02d}/mri.pt')
             mri_data = mri_data.get_fdata()
             mri_data = torch.tensor(mri_data, dtype=DTYPE)
             for _ in range(mri_n_downsampling):
@@ -61,17 +70,17 @@ class MyTrainDataset(Dataset):
             mris.append(mri_data)
             
             if eeg_filter == 0:
-                eegpath = PosixPath(f'/data/pheeeeee/FINAL_EEG_DATA/sub-{identity:02d}/eeg')
+                eegpath = os.path.join(eeg_subject_dir, f'sub-{identity:02d}/eeg')
             else:
-                eegpath = PosixPath(f'/data/pheeeeee/FINAL_EEG_DATA/sub-{identity:02d}/eeg{eeg_filter}filtered')
+                eegpath = os.path.join(eeg_subject_dir, f'sub-{identity:02d}/eeg_{eeg_filter}') #PosixPath(f'/data/pheeeeee/FINAL_EEG_DATA/sub-{identity:02d}/eeg{eeg_filter}filtered')
             eeg_dir.append(eegpath)
             
             if outputtype in ['mask', 'mask_on_mri']:
-                outputpath = PosixPath(f'/data/pheeeeee/FINAL_EEG_DATA/sub-{identity:02d}/voxel_coordinate')
+                outputpath = os.path.join(eeg_subject_dir, f'sub-{identity:02d}/voxel_coordinate') #PosixPath(f'/data/pheeeeee/FINAL_EEG_DATA/sub-{identity:02d}/voxel_coordinate')
             elif outputtype == 'scale':
-                outputpath = PosixPath(f'/data/pheeeeee/FINAL_EEG_DATA/subb-{identity:02d}/ras')
+                outputpath = os.path.join(eeg_subject_dir, f'sub-{identity:02d}/ras') #PosixPath(f'/data/pheeeeee/FINAL_EEG_DATA/subb-{identity:02d}/ras')
             else:
-                outputpath = PosixPath(f'/data/pheeeeee/FINAL_EEG_DATA/sub-{identity:02d}/{outputtype}')
+                outputpath = os.path.join(eeg_subject_dir, f'sub-{identity:02d}/{outputtype}') #PosixPath(f'/data/pheeeeee/FINAL_EEG_DATA/sub-{identity:02d}/{outputtype}')
             output_dir.append(outputpath)
             
         self.mris = mris
@@ -120,13 +129,15 @@ class MyTrainDataset(Dataset):
         elif self.outputtype == 'mean_ras':
             output = output.mean(dim=0)
         elif self.outputtype == 'scale':
-            center = np.load(PosixPath(f'/data/pheeeeee/FINAL_EEG_DATA/sub-{identity:02d}/center_ras/{eeg_ind}.npy'))
+            center = np.load(os.path.join(self.eeg_subject_dir, f'center_ras/{eeg_ind}.npy')) #PosixPath(f'/data/pheeeeee/FINAL_EEG_DATA/sub-{identity:02d}/center_ras/{eeg_ind}.npy'))
             distances = np.linalg.norm(output - center, axis=1)
             output = np.max(distances)
         output = torch.tensor(output, dtype=self.DTYPE)
         output = output.squeeze()        
         return identity, mri, eeg, output
-    
+
+
+
 
 class MyTrainDataset_sourcereconstructor(Dataset):
     def __init__(self, mri_id:list, 
