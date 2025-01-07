@@ -107,6 +107,7 @@ class Trainer:
     def _save_checkpoint(self, epoch):
         ckp = self.model.state_dict()
         torch.save(ckp, f"checkpoint/{self.gpu_id}checkpoint.pt")
+        self.epoch = epoch
         if epoch % 10 == 1:
             print(f"Epoch {epoch} | Training checkpoint saved at checkpoit.pt")
         
@@ -178,7 +179,40 @@ class Trainer:
             self.inference_time = np.array(self.inference_time)
             self.ave_inference_times= self.inference_time.mean()
             print(f'mean inference time : {self.ave_inference_times} and std : {statistics.stdev(self.inference_time)}')
+
+
+    def save_results(self, directory_path):
+        import json
+        import glob
+        if not os.path.exists(directory_path):
+            os.makedirs(directory_path)
+        experiment_data = {
+                "hyperparameters": {
+                    "epochs": self.epoch,
+                    "loss function" : self.loss_ft
+                },
+                "results": {
+                    "training loss" : self.train_loss_traj,
+                    "average training loss" : np.array(self.train_loss_traj).mean(),
+                    "validation loss" : self.validation_loss_traj,
+                    "average validataion loss" : np.array(self.validation_loss_traj).mean(),
+                    "test loss" : self.testloss,
+                    "average test loss" : self.testloss.mean()
+                }
+            }
+        json_file_path = os.path.join(directory_path, "experiment_results.json")
+        with open(json_file_path, "w") as json_file:
+            json.dump(experiment_data, json_file, indent=4)
         
+        model_checkpoint_path = os.path.join(directory_path, "model_checkpoint.pth")
+        torch.save({
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'hyperparameters': experiment_data["hyperparameters"],
+            'results': experiment_data["results"]
+        }, model_checkpoint_path)
+
+        print("results saved.")
     
 
 #Helper Functions: It loads training set, model and optimizer
