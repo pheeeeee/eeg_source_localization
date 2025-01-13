@@ -5,6 +5,7 @@ import random
 import mne
 import nibabel as nib
 import os
+from deeplearning_code_files.utils import ras_to_voxel
 
 
 class eeg_generator():
