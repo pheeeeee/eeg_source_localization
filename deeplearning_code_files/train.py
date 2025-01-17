@@ -3,8 +3,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader, random_split
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.cuda.amp import autocast, GradScaler
-
+from torch.amp import autocast, GradScaler
 
 from deeplearning_code_files.datautils import MyTrainDataset
 from deeplearning_code_files.utils import *
@@ -17,6 +16,7 @@ from tqdm import tqdm
 import numpy as np
 import random
 import time
+import json
 
 class Trainer:
     def __init__(
@@ -29,7 +29,8 @@ class Trainer:
             save_energy: int,
             loss_ft,
             model_mode='mri+eeg',
-            pinn_loss=False
+            pinn_loss=False,
+            autocast=False
             ) -> None:
         self.gpu_id = gpu_id
         self.model = model.to(gpu_id)
@@ -40,6 +41,7 @@ class Trainer:
         self.loss_ft = loss_ft
         self.train_loss_traj = []
         self.validation_loss_traj = []
+        self.autocast = autocast
         
         assert model_mode in ['mri+eeg', 'eeg'], 'model mode must be either "mri+eeg" or "eeg"'
         self.model_mode = model_mode
@@ -49,7 +51,31 @@ class Trainer:
     def _run_batch(self, identity, mri, eeg, targets):
         if self.phase == 'training':
             self.optimizer.zero_grad()
-            with autocast():                    
+            if self.autocast is True:
+                with autocast(device_type='cuda'):                    
+                    if self.model_mode == 'eeg':
+                        output = self.model(eeg)
+                    else:      
+                        output = self.model([mri, eeg])
+                    if self.pinnloss == True:
+                        brainmasks = torch.zeros_like(output)
+                        for _,iii in enumerate(list(identity)):
+                            brain_mask_path = PosixPath(f'/mnt/d/openneuro_mris/sub-{iii:02d}') 
+                            brainmask = nib.load(os.path.join(brain_mask_path,'sample', 'mri','brainmask.mgz'))
+                            brainmask = brainmask.get_fdata()
+                            brainmask = torch.tensor(brainmask, dtype=output.dtype, device=output.device)
+                            brainmasks[_] = brainmask
+                        output = output * brainmasks
+                        targets = targets * brainmasks
+                        del brainmasks
+                        loss = self.loss_ft(output, targets)
+                    else:
+                        loss = self.loss_ft(output, targets)
+                self.scaler.scale(loss).backward()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+                self.running_train_loss += loss.item()
+            else:
                 if self.model_mode == 'eeg':
                     output = self.model(eeg)
                 else:      
@@ -68,10 +94,10 @@ class Trainer:
                     loss = self.loss_ft(output, targets)
                 else:
                     loss = self.loss_ft(output, targets)
-            self.scaler.scale(loss).backward()
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
-            self.running_train_loss += loss.item()
+                loss.backward()
+                self.optimizer.step()
+                self.running_train_loss += loss.item()
+                
         if self.phase == 'validation':
             if self.model_mode == 'eeg':
                 output = self.model(eeg)
@@ -107,12 +133,21 @@ class Trainer:
     def _save_checkpoint(self, epoch):
         ckp = self.model.state_dict()
         torch.save(ckp, f"checkpoint/{self.gpu_id}checkpoint.pt")
+        savingresults = {'epoch':epoch,
+                         'training_loss_traj':self.train_loss_traj,
+                         'validation_loss_traj':self.validation_loss_traj,
+                         'loss function':str(self.loss_ft)
+                         }
+        with open('checkpoint/results_checkpoint.json', "w") as file:
+            json.dump(savingresults, file)
+        
         self.epoch = epoch
         if epoch % 10 == 1:
             print(f"Epoch {epoch} | Training checkpoint saved at checkpoit.pt")
         
     def train(self, max_epochs: int):
-        self.scaler = GradScaler()
+        if self.autocast is True:
+            self.scaler = GradScaler()
 
         for epoch in tqdm(range(max_epochs)):
             self._run_epoch(epoch)
@@ -125,13 +160,16 @@ class Trainer:
     def test(self,
          test_data:DataLoader,
          loss_ft=None,
+         seen=False
          ):
         import time
         import statistics
         self.phase = 'test'
         if loss_ft is None:
             loss_ft = self.loss_ft
-        
+        self.tested_on_seen_mri = seen
+        if seen == True:
+            self.seentestloss = []
         self.testloss = []
         self.inference_time = []
         
@@ -171,17 +209,25 @@ class Trainer:
                     loss = self.loss_ft(output, targets)
                 else:
                     loss = self.loss_ft(output, targets)
+                if seen == True:
+                    self.seentestloss.append(loss.item())
                 self.testloss.append(loss.item())
                 self.inference_time.append(end_time - start_time)
-            self.testloss = np.array(self.testloss)
-            ave_testloss = self.testloss.mean()
+            if seen == True:
+                self.seentestloss = np.array(self.seentestloss)
+            else:
+                self.testloss = np.array(self.testloss)
+            if seen == True:
+                ave_testloss = self.seentestloss.mean()
+            else:
+                ave_testloss = self.testloss.mean()
             print(f'mean testloss :{ave_testloss} (std: {statistics.stdev(self.testloss)})' )
             self.inference_time = np.array(self.inference_time)
             self.ave_inference_times= self.inference_time.mean()
             print(f'mean inference time : {self.ave_inference_times} and std : {statistics.stdev(self.inference_time)}')
 
 
-    def save_results(self, directory_path):
+    def save_results(self, directory_path, tested_on_seen_mri):
         import json
         import glob
         if not os.path.exists(directory_path):
@@ -189,7 +235,8 @@ class Trainer:
         experiment_data = {
                 "hyperparameters": {
                     "epochs": self.epoch,
-                    "loss function" : self.loss_ft
+                    "loss function" :str(self.loss_ft),
+                    "autocast" : self.autocast
                 },
                 "results": {
                     "training loss" : self.train_loss_traj,
@@ -197,9 +244,14 @@ class Trainer:
                     "validation loss" : self.validation_loss_traj,
                     "average validataion loss" : np.array(self.validation_loss_traj).mean(),
                     "test loss" : self.testloss,
-                    "average test loss" : self.testloss.mean()
+                    "average test loss" : self.testloss.mean(),
                 }
             }
+        if tested_on_seen_mri == True:
+            assert len(self.seentestloss) > 1, "not tested on seen mri data"
+            experiment_data['results']['test loss for seen mri data'] = self.seentestloss
+            experiment_data['results']['average test loss for seen mri data'] = self.seentestloss.mean()
+            
         json_file_path = os.path.join(directory_path, "experiment_results.json")
         with open(json_file_path, "w") as json_file:
             json.dump(experiment_data, json_file, indent=4)
@@ -263,4 +315,3 @@ if __name__ == "__main__":
     save_every = int(sys.argv[2])
     device = 'cuda'
     main()
-    
