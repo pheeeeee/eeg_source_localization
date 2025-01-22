@@ -29,24 +29,24 @@ class eeg_generator():
         self.montage = mne.channels.make_standard_montage(montage)
         if info is  None:
             info = mne.create_info(ch_names=self.montage.ch_names, sfreq = sfreq, ch_types='eeg')
+            info.set_montage(montage)
         self.info = info
         if src is  None:
             if bem is None:
                 model = mne.make_bem_model(subject=subject, ico=4, 
                                         conductivity=conductivity, subjects_dir=subjects_dir)
                 bem = mne.make_bem_solution(model)
+                self.bem = bem
             else:
                 self.bem = bem
             src = mne.setup_source_space(subject, subjects_dir= subjects_dir, spacing = spacing)
         self.src = src
-
         coreg  = mne.coreg.Coregistration(info, subject, subjects_dir, fiducials="estimated")
-        coreg.fit_fiducials(verbose=True)
-        coreg.fit_icp(n_iterations=100, nasion_weight=1.0, verbose=True)
-        coreg.omit_head_shape_points(distance=5.0 / 1000)  # distance is in meters
-        coreg.fit_icp(n_iterations=20, nasion_weight=10.0, verbose=True)
+        coreg = coreg.fit_fiducials(verbose=True)
+        coreg = coreg.fit_icp(n_iterations=100, nasion_weight=1.0, verbose=True)
+        coreg = coreg.omit_head_shape_points(distance=5.0 / 1000)  # distance is in meters
+        coreg = coreg.fit_icp(n_iterations=20, nasion_weight=10.0, verbose=True)
         fwd = mne.make_forward_solution(info,trans=coreg.trans,src=src,bem=bem,meg=False,eeg=True,mindist=5,verbose=True)
-
         self.coreg = coreg
         self.fwd = fwd
 
@@ -163,7 +163,6 @@ class eeg_generator():
                 right_combined_label = rightlabels[0][0]
                 for _____ in range(len(rightlabels)):
                     right_combined_label = right_combined_label.__add__(rightlabels[_____][0])
-
             return labels
     
     def create_src_simulator(self):
@@ -221,7 +220,3 @@ class eeg_generator():
             raw_filter = raw_filter.filter(filter[0], filter[1], filter_length='auto')
             eeg = raw_filter.get_data(picks='eeg',tmin=0)
         return eeg
-    
-
-
-    
