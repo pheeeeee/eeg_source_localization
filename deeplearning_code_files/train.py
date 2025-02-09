@@ -1,4 +1,3 @@
-
 import torch
 from torch.utils.data import Dataset, DataLoader, random_split
 import torch.nn as nn
@@ -30,7 +29,8 @@ class Trainer:
             loss_ft,
             model_mode='mri+eeg',
             pinn_loss=False,
-            autocast=False
+            autocast=False,
+            saving_dir_path='/home/pheeeeee/neuroimaging/checkpoint'
             ) -> None:
         self.gpu_id = gpu_id
         self.model = model.to(gpu_id)
@@ -42,6 +42,10 @@ class Trainer:
         self.train_loss_traj = []
         self.validation_loss_traj = []
         self.autocast = autocast
+        self.saving_dir_path = saving_dir_path
+        
+        if not os.path.exists(saving_dir_path):
+            os.makedirs(saving_dir_path)
         
         assert model_mode in ['mri+eeg', 'eeg'], 'model mode must be either "mri+eeg" or "eeg"'
         self.model_mode = model_mode
@@ -131,14 +135,15 @@ class Trainer:
             self.validation_loss_traj.append(self.running_validation_loss/len(self.validation_data))
             
     def _save_checkpoint(self, epoch):
+        directory_path = self.saving_dir_path
         ckp = self.model.state_dict()
-        torch.save(ckp, f"checkpoint/{self.gpu_id}checkpoint.pt")
+        torch.save(ckp, os.path.join(directory_path, f"model_checkpoint_{self.gpu_id}.pt"))
         savingresults = {'epoch':epoch,
                          'training_loss_traj':self.train_loss_traj,
                          'validation_loss_traj':self.validation_loss_traj,
                          'loss function':str(self.loss_ft)
                          }
-        with open('checkpoint/results_checkpoint.json', "w") as file:
+        with open(os.path.join(directory_path, 'results_checkpoint.json'), "w") as file:
             json.dump(savingresults, file)
         
         self.epoch = epoch
@@ -227,11 +232,10 @@ class Trainer:
             print(f'mean inference time : {self.ave_inference_times} and std : {statistics.stdev(self.inference_time)}')
 
 
-    def save_results(self, directory_path, tested_on_seen_mri):
+    def save_results(self, tested_on_seen_mri, directory_path=None):
         import json
-        import glob
-        if not os.path.exists(directory_path):
-            os.makedirs(directory_path)
+        if directory_path is None:
+            directory_path = self.saving_dir_path
         experiment_data = {
                 "hyperparameters": {
                     "epochs": self.epoch,
@@ -239,30 +243,35 @@ class Trainer:
                     "autocast" : self.autocast
                 },
                 "results": {
-                    "training loss" : self.train_loss_traj,
+                    "training loss" : list(self.train_loss_traj),
                     "average training loss" : np.array(self.train_loss_traj).mean(),
-                    "validation loss" : self.validation_loss_traj,
+                    "validation loss" : list(self.validation_loss_traj),
                     "average validataion loss" : np.array(self.validation_loss_traj).mean(),
-                    "test loss" : self.testloss,
-                    "average test loss" : self.testloss.mean(),
+                    "unseen test loss" : list(self.testloss),
+                    "average unseen test loss" : self.testloss.mean(),
                 }
             }
         if tested_on_seen_mri == True:
             assert len(self.seentestloss) > 1, "not tested on seen mri data"
-            experiment_data['results']['test loss for seen mri data'] = self.seentestloss
+            experiment_data['results']['test loss for seen mri data'] = list(self.seentestloss)
             experiment_data['results']['average test loss for seen mri data'] = self.seentestloss.mean()
             
         json_file_path = os.path.join(directory_path, "experiment_results.json")
         with open(json_file_path, "w") as json_file:
             json.dump(experiment_data, json_file, indent=4)
         
-        model_checkpoint_path = os.path.join(directory_path, "model_checkpoint.pth")
+        model_checkpoint_path = os.path.join(directory_path, "model_checkpoint_test.pth")
         torch.save({
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'hyperparameters': experiment_data["hyperparameters"],
             'results': experiment_data["results"]
         }, model_checkpoint_path)
+        
+        np.save(os.path.join(directory_path, 'trainingloss.npy'), self.train_loss_traj)
+        np.save(os.path.join(directory_path, 'validationloss.npy'),self.validation_loss_traj)
+        np.save(os.path.join(directory_path, 'seentestloss.npy'),self.seentestloss)
+        np.save(os.path.join(directory_path, 'unseentestloss.npy'),self.testloss)
 
         print("results saved.")
     
