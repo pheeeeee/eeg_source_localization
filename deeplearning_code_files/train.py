@@ -1,13 +1,16 @@
+
+
 import torch
 from torch.utils.data import Dataset, DataLoader, random_split
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.amp import autocast, GradScaler
+#from torch.amp import autocast, GradScaler
 
 from deeplearning_code_files.datautils import MyTrainDataset
 from deeplearning_code_files.utils import *
 import glob
 import os
+import math
 
 import matplotlib.pyplot as plt
 from tqdm import tqdm
@@ -45,11 +48,13 @@ class Trainer:
         self.autocast = autocast
         self.early_stop = early_stop
         self.saving_dir_path = saving_dir_path
-        
         self.best_loss = float('inf')
         self.best_epoch=0
-        if early_stop is True:
-            self.patience = 30 #Number of epochs to wait before stopping.
+        if early_stop:
+            if type(early_stop) is int:
+                self.patience = early_stop
+            else:
+                self.patience = 30 #Number of epochs to wait before stopping.
             self.best_loss = float('inf')
             self.counter = 0
         
@@ -162,18 +167,17 @@ class Trainer:
                 self.best_loss = self.running_validation_loss/len(self.validation_data)
                 self.best_epoch = len(self.validation_loss_traj)
                 self.best_model = self.model
-            print(f"\n Best validation loss so far : (epoch : {self.best_epoch}, validation loss : {self.best_loss})")
-                
-            #Early Stopping
-            if self.early_stop == True:
-                if self.running_validation_loss/len(self.validation_data) < self.best_loss:
-                    self.best_loss = self.running_validation_loss/len(self.validation_data)
+                if self.early_stop:
                     self.counter = 0
-                    torch.save(self.model.state_dict(), os.path.join(self.saving_dir_path, f"best_model_sofar_checkpoint_{self.gpu_id}.pt"))
-                else:
+            else:
+                if self.early_stop:
                     self.counter += 1
-                if self.counter >= self.patience:
-                    return True
+                    if self.counter >= self.patience:
+                        torch.save(self.model.state_dict(), os.path.join(self.saving_dir_path, f"best_model_sofar_checkpoint_{self.gpu_id}.pt"))
+                        return True   
+            #print(f"\n Best validation loss so far : (epoch : {self.best_epoch}, validation loss : {self.best_loss})")
+
+
             
     def _save_checkpoint(self, epoch):
         directory_path = self.saving_dir_path
@@ -194,13 +198,14 @@ class Trainer:
     def train(self, max_epochs: int):
         if self.autocast is True:
             self.scaler = GradScaler()
-
         for epoch in tqdm(range(max_epochs)):
-            self._run_epoch(epoch)
+            should_stop = self._run_epoch(epoch)
             if epoch % self.save_energy == 0:
                 self._save_checkpoint(epoch)
             print('EPOCH : %6d/%6d | Train Loss : %8.7f  | Validation : %8.7f ' %(epoch, max_epochs, self.train_loss_traj[epoch], self.validation_loss_traj[epoch]))
-            #torch.cuda.empty_cache()
+            if should_stop:
+                print("Early Stopping Triggered")
+                break
             
     
     def test(self,
@@ -253,9 +258,9 @@ class Trainer:
                     output = output * brainmasks
                     targets = targets * brainmasks
                     del brainmasks
-                    loss = self.loss_ft(output, targets)
+                    loss = loss_ft(output, targets)
                 else:
-                    loss = self.loss_ft(output, targets)
+                    loss = loss_ft(output, targets)
                 if seen == True:
                     self.seentestloss.append(loss.item())
                 else:
@@ -263,14 +268,17 @@ class Trainer:
                 self.inference_time.append(end_time - start_time)
             if seen == True:
                 self.seentestloss = np.array(self.seentestloss)
+                testloss = self.seentestloss
             else:
                 self.testloss = np.array(self.testloss)
-            if seen == True:
-                ave_testloss = self.seentestloss.mean()
-                print(f'mean testloss :{ave_testloss} (std: {statistics.stdev(self.seentestloss)})' )
-            else:
-                ave_testloss = self.testloss.mean()
-                print(f'mean testloss :{ave_testloss} (std: {statistics.stdev(self.testloss)})' )
+                testloss = self.testloss
+            
+            if "MSE" in str(self.loss_ft):
+                testloss = np.sqrt(testloss)
+            
+            ave_testloss = testloss.mean()
+            print(f'Evaluated with metric {str(loss_ft)}')
+            print(f'mean testloss :{ave_testloss} (std: {statistics.stdev(testloss)})' )
             self.inference_time = np.array(self.inference_time)
             self.ave_inference_times= self.inference_time.mean()
             print(f'mean inference time : {self.ave_inference_times} and std : {statistics.stdev(self.inference_time)}')
@@ -318,5 +326,3 @@ class Trainer:
         np.save(os.path.join(directory_path, 'unseentestloss.npy'),self.testloss)
 
         print("results saved.")
-    
-
