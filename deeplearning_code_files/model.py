@@ -1,10 +1,5 @@
 
 
-### mrisubnet (conv based)
-### eegsubnet (conv based)
-### fusionnet (stack)
-
-
 
 import torch
 import torch.nn as nn
@@ -48,7 +43,6 @@ class mrisubnet(nn.Module):
         return conv_layer
 
     def forward(self, x):
-        x = x.squeeze(0)
         x = x.unsqueeze(1) #Conv3d require 5dim (batch, channels, depth, height, width)
         for i in range(self.num_conv_blocks):
             layer = self.layers[i]
@@ -257,3 +251,8 @@ class fusion(nn.Module):
         return output
     
     
+
+        
+        
+        
+        
