@@ -1,3 +1,5 @@
+
+from eeg_generator.eeg_generator import eeg_generator
 import nibabel as nib
 from pathlib import PosixPath
 import mne
@@ -6,6 +8,39 @@ import matplotlib.pyplot as plt
 import os
 import random
 
+
+n_sources = 1
+extents = (21/2,58/2)
+snr_db = 15
+amplitude_kernel=0
+
+
+# Temporal Property
+sampling_rate = 500  # Hz 
+duration = 1  # seconds
+time = np.linspace(0, duration, int(duration * sampling_rate), endpoint=False)
+frequency = 5  # Hz
+sin_wave = np.sin(2*np.pi * frequency * time)
+peak_duration = 0.1  
+peak_start = int((duration - peak_duration) / 2 * sampling_rate)  
+peak_end = peak_start + int(peak_duration * sampling_rate) 
+output = np.zeros_like(time)  
+output[peak_start:peak_end] = sin_wave[int(0.4*sampling_rate*duration):int(0.5*sampling_rate*duration)]
+
+sinpeak = 10
+output = output * sinpeak
+
+# Plot Activation Function at Dipole
+plt.figure(figsize=(10, 4))
+plt.plot(time, output, label="Time Course")
+plt.xlabel("Time (s)")
+plt.ylabel("Amplitude")
+plt.title("Time Course with 100ms 5Hz Sinusoidal Peak")
+plt.axvline(peak_start / sampling_rate, color="r", linestyle="--", label="Peak Start")
+plt.axvline(peak_end / sampling_rate, color="g", linestyle="--", label="Peak End")
+plt.legend()
+plt.grid()
+plt.show()
 
 
 def gaussian(x,y,h=1):
@@ -50,12 +85,25 @@ plt.grid()
 plt.show()
 
 
-for amplitude_kernel in [0]:
-    for iii in [1,2,3,4,5,6,7,8,9,10,11,12,13,14]:
-        saving_dir = #### where you want to save EEG and output data
+for amplitude_kernel in [0,1]:
+    for iii in [13,12,11,10,9,8,7,6,5,4,3,2,1]:
+        saving_dir = PosixPath(f'/mnt/d/REAL_FINAL_MJ/twelve_mri_20000data/snr_db{snr_db}/sub-{iii:02d}')
+
+        #if n_sources == 1:
+        #    saving_dir = PosixPath(f'/mnt/c/Users/CMME/Desktop/REALDATA_original_OPENNEURO_EEG/surface_sinusoidalpeak{sinpeak}/sub-{iii:02d}/singledipole/amplitude{amplitude_kernel}')
+        #else:
+        #    saving_dir = PosixPath(f'/mnt/c/Users/CMME/Desktop/REALDATA_original_OPENNEURO_EEG/surface_sinusoidalpeak{sinpeak}/sub-{iii:02d}/multidipole/amplitude{amplitude_kernel}')
+        
+        for hellowdoyouhearme in ['raw', 'eeg', 'center_ras', 'ras']:
+            saving_dir4 = os.path.join(saving_dir, hellowdoyouhearme)
+            os.makedirs(saving_dir4, exist_ok=True)
+            #for snr_db in [30,20,15,10,5,1,0,-10]:
+            #    saving_dir4 = os.path.join(saving_dir, f'eeg/snr{snr_db}')
+            #    os.makedirs(saving_dir4, exist_ok=True)
         
         datasets=[]
-        subjects_dir = #### where freesurfer outputs are saved.
+        subjects_dir = PosixPath(f'/mnt/d/mris_MJ/sub-{iii:02d}')#PosixPath(f'/mnt/d/openneuro_hearing_loss/sub-{iii:02d}/ses-01/anat')  #PosixPath(f'/mnt/c/Users/CMME/Desktop/openneuro_hearing_loss_mris_transformed/centered/sub-{iii:02d}')
+        #
         subject = 'sample'
         
         #If it needs BEM.
@@ -64,8 +112,8 @@ for amplitude_kernel in [0]:
         N = 2000
         spacing_training = 'ico4'
         montage_training = "standard_1020"
-        sfreq = 100
-        montage = 'standard_1020'
+        sfreq = 200
+        montage = 'biosemi32'
         standard_montage = mne.channels.make_standard_montage(montage)
         
         #Create info with the montage (Remind that mne.Info is the object with info about sensors and methods of measurement.)
@@ -76,14 +124,21 @@ for amplitude_kernel in [0]:
         conductivity=(0.3, 0.06, 0.3)
         model = mne.make_bem_model(subject=subject, conductivity=conductivity, subjects_dir=subjects_dir)
         bem = mne.make_bem_solution(model)
+        #mne.write_bem_surfaces(f"/mnt/d/mris_MJ/sub-{iii:02d}/{iii:02d}bem.fif", bem, overwrite=True)
         src = mne.setup_source_space(subject, subjects_dir= subjects_dir, spacing = spacing_training)
         coreg = mne.coreg.Coregistration(info, subject, subjects_dir, fiducials="estimated")
         coreg.fit_fiducials(verbose=True)
         coreg.fit_icp(n_iterations=100, nasion_weight=1.0, verbose=True)
         coreg.omit_head_shape_points(distance=5.0 / 1000)  # distance is in meters
         coreg.fit_icp(n_iterations=20, nasion_weight=10.0, verbose=True)
-        mne.write_trans(os.path.join(subjects_dir, "trans.fif"), coreg.trans, overwrite=True) ### Save trans.fif where 'sample' is located.
+        #mne.write_trans(os.path.join(subjects_dir, "trans.fif"), coreg.trans, overwrite=True) ### Save trans.fif where 'sample' is located.
         fwd = mne.make_forward_solution(info,trans=coreg.trans,src=src,bem=bem,meg=False,eeg=True)
+        
+        #subjects_dir = PosixPath(f'/mnt/d/mris_MJ/sub-{iii:02d}')
+        #bem = mne.read_bem_solution(f"/mnt/d/mris_MJ/sub-{iii:02d}/{iii:02d}bem.fif")
+        #src = mne.read_source_spaces(f"/mnt/d/mris_MJ/sub-{iii:02d}/{iii:02d}src.fif")
+        #trans = mne.read_trans(f"/mnt/d/mris_MJ/sub-{iii:02d}/trans.fif")
+        #fwd = mne.make_forward_solution(info,trans=trans,src=src,bem=bem,meg=False,eeg=True)
         
         for _ in range(N):
             n_sources= 1 #################################################################################################################################33333
@@ -103,7 +158,6 @@ for amplitude_kernel in [0]:
             
             shape = 'uniform' #'gaussian'        #################################################################################################################################33333
             kernel_var =  None #None if 'shape is uniform. # kernel_var  #Note. variance of uniform distribution [a,b] is (b-a)**2 / 12 for 1d.
-            snr=4.5
             h = None
             
         
@@ -219,7 +273,6 @@ for amplitude_kernel in [0]:
                     activity = [signal*amplitude]*len(right_vertex)
                     source[1] = list(activity)
                     rvertices = np.array([(1,ver) for ver in right_vertex])
-    
                 else:
                     msg = BaseException("shape must be of type >string< and be either >gaussian< or >uniform<.")
                     raise(msg)    
@@ -249,11 +302,20 @@ for amplitude_kernel in [0]:
             raw.set_eeg_reference(projection=True)
             
             raw.save(os.path.join(saving_dir,f'raw/{_}raw.fif'),overwrite=True)
-            np.save(os.path.join(saving_dir, f'center_dipole/{_}.npy'), center_fiff_coord*1000)
-            np.save(os.path.join(saving_dir, f'all_dipoles/{_}.npy'), dipoles_src)
+            np.save(os.path.join(saving_dir, f'center_ras/{_}.npy'), center_fiff_coord*1000)
+            np.save(os.path.join(saving_dir, f'ras/{_}.npy'), dipoles_src)
+            #np.save(os.path.join(saving_dir, f'vertices/{_}.npy'), np.array(vertices))
             
-                
-            for snr_db in ['zeronoise',100,50,40,30,20,15,10,5,1,0,-10]:
+            
+            #configured
+            #trans=coreg.trans
+            #center_fiff_coord = mne.transforms.apply_trans(trans['trans'], center_fiff_coord)
+            #np.save(os.path.join(saving_dir, f'configured_center_dipole/{_}.npy'), center_fiff_coord*1000)
+            #dipoles_src = mne.transforms.apply_trans(trans['trans'], dipoles_src)
+            #np.save(os.path.join(saving_dir, f'configured_all_dipoles/{_}.npy'), dipoles_src)
+
+            
+            for snr_db in [30]:#['zeronoise',100,50,40,30,20,15,10,5,1,0,-10]:
                 cov = mne.make_ad_hoc_cov(raw.info)
                 raw1 = raw.copy()
                 if snr_db != 'zeronoise':
@@ -269,9 +331,10 @@ for amplitude_kernel in [0]:
                 raw1 = raw1.apply_proj()
                 
                 eeg = raw1.get_data(picks='eeg', tmin=0)
-                np.save(os.path.join(saving_dir, f'eeg/snr{snr_db}/{_}.npy'), eeg)
+                np.save(os.path.join(saving_dir, f'eeg/{_}.npy'), eeg)
                 
                 
+            
             
             
             
